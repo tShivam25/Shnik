@@ -125,6 +125,7 @@ class MockStore {
       (u) =>
         u.username.toLowerCase() === clean ||
         u.email.toLowerCase() === clean ||
+        `${u.username.toLowerCase()}@shnik.internal` === clean ||
         `${u.username.toLowerCase()}@shnik.app` === clean
     );
 

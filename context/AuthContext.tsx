@@ -10,7 +10,7 @@ interface AuthContextType {
   loading: boolean;
   isMock: boolean;
   login: (usernameOrEmail: string, password?: string) => Promise<void>;
-  signup: (data: { username: string; full_name: string; email: string; password?: string }) => Promise<void>;
+  signup: (data: { username: string; full_name: string; email?: string; password?: string }) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -77,22 +77,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const supabase = createClient();
         let email = usernameOrEmail.trim();
 
-        // If user entered a username instead of an email, resolve it
-        if (!email.includes('@')) {
-          try {
-            const res = await fetch('/api/auth/resolve-email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ identifier: email }),
-            });
-            if (res.ok) {
-              const data = await res.json();
-              if (data?.email) {
-                email = data.email;
-              }
+        // Resolve username to actual account email and auto-confirm if unconfirmed
+        try {
+          const res = await fetch('/api/auth/resolve-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identifier: email }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.email) {
+              email = data.email;
             }
-          } catch (resErr) {
-            console.warn('Could not resolve username to email:', resErr);
+          }
+        } catch (resErr) {
+          console.warn('Could not resolve username to email:', resErr);
+          if (!email.includes('@')) {
+            email = `${email.toLowerCase()}@shnik.internal`;
           }
         }
 
@@ -108,33 +109,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signup = async (data: { username: string; full_name: string; email: string; password?: string }) => {
+  const signup = async (data: { username: string; full_name: string; email?: string; password?: string }) => {
     setLoading(true);
     try {
+      const cleanUsername = data.username.trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
+      const syntheticEmail = data.email || `${cleanUsername}@shnik.internal`;
+
       if (isMock) {
         const newUser = mockStore.signUp({
-          username: data.username,
+          username: cleanUsername,
           full_name: data.full_name,
-          email: data.email,
+          email: syntheticEmail,
           password: data.password,
         });
         setUser(newUser);
       } else {
-        const supabase = createClient();
-        const { data: authData, error } = await supabase.auth.signUp({
-          email: data.email,
-          password: data.password || 'SecurePassword123!',
-          options: {
-            data: {
-              username: data.username.toLowerCase(),
-              full_name: data.full_name,
-            },
-          },
+        // 1. Create account via server API with email_confirm: true (no email confirmation needed!)
+        const res = await fetch('/api/auth/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: cleanUsername,
+            full_name: data.full_name,
+            password: data.password,
+          }),
         });
-        if (error) throw error;
-        if (authData.user) {
-          await refreshUser();
+
+        const resData = await res.json();
+        if (!res.ok) {
+          throw new Error(resData.error || 'Signup failed');
         }
+
+        // 2. Automatically sign in with the created account
+        const supabase = createClient();
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: resData.email || syntheticEmail,
+          password: data.password || 'SecurePassword123!',
+        });
+
+        if (signInError) {
+          console.warn('Auto sign-in error after signup:', signInError);
+        }
+
+        await refreshUser();
       }
     } finally {
       setLoading(false);

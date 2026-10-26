@@ -8,29 +8,27 @@ import { useAuth } from '@/context/AuthContext';
 export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
-  const [usernameOrEmail, setUsernameOrEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!usernameOrEmail.trim()) {
-      setError('Please enter your username or email');
+    if (!username.trim()) {
+      setError('Please enter your username');
       return;
     }
 
     setError(null);
     setSubmitting(true);
     try {
-      await login(usernameOrEmail, password);
+      await login(username.trim(), password);
       router.push('/home');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Invalid username or password.';
       if (msg.toLowerCase().includes('invalid login credentials')) {
-        setError('Invalid credentials. If you used a username, try your email address, or check if email confirmation is enabled in Supabase.');
-      } else if (msg.toLowerCase().includes('email not confirmed')) {
-        setError('Email not confirmed. Please check your inbox or disable email confirmation in Supabase settings.');
+        setError('Incorrect username or password. Please verify and try again.');
       } else {
         setError(msg);
       }
@@ -51,7 +49,7 @@ export default function LoginPage() {
         </h1>
 
         {error && (
-          <div className="mb-4 p-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded leading-relaxed">
+          <div className="mb-4 p-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded leading-relaxed text-left">
             {error}
           </div>
         )}
@@ -61,9 +59,9 @@ export default function LoginPage() {
             type="text"
             required
             autoCapitalize="none"
-            value={usernameOrEmail}
-            onChange={(e) => setUsernameOrEmail(e.target.value)}
-            placeholder="Phone number, username, or email"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="Username"
             className="w-full px-2.5 py-2 text-xs bg-[#FAFAFA] border border-[#DBDBDB] rounded focus:outline-none focus:border-gray-400 placeholder-gray-400"
           />
 

@@ -8,9 +8,8 @@ import { useAuth } from '@/context/AuthContext';
 export default function SignupPage() {
   const router = useRouter();
   const { signup } = useAuth();
-  const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -19,12 +18,16 @@ export default function SignupPage() {
     e.preventDefault();
 
     const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
-    if (!cleanUsername) {
-      setError('Please provide a valid username');
+    if (!cleanUsername || cleanUsername.length < 3) {
+      setError('Username must be at least 3 characters (letters, numbers, underscores, dots).');
       return;
     }
     if (!fullName.trim()) {
-      setError('Please provide your full name');
+      setError('Please enter your full name');
+      return;
+    }
+    if (!password || password.length < 6) {
+      setError('Password must be at least 6 characters long.');
       return;
     }
 
@@ -34,7 +37,6 @@ export default function SignupPage() {
       await signup({
         username: cleanUsername,
         full_name: fullName.trim(),
-        email: email.trim() || `${cleanUsername}@shnik.app`,
         password,
       });
       router.push('/home');
@@ -62,21 +64,12 @@ export default function SignupPage() {
         </p>
 
         {error && (
-          <div className="mb-4 p-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded">
+          <div className="mb-4 p-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded text-left">
             {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-2">
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="Mobile Number or Email"
-            className="w-full px-2.5 py-2 text-xs bg-[#FAFAFA] border border-[#DBDBDB] rounded focus:outline-none focus:border-gray-400 placeholder-gray-400"
-          />
-
           <input
             type="text"
             required
