@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { AuthProvider } from '@/context/AuthContext';
+import { QuSecBridgeProvider } from '@/components/QuSecBridgeProvider';
 
 export const metadata: Metadata = {
   title: 'Shnik',
@@ -32,9 +33,13 @@ export default function RootLayout({
           href="https://fonts.googleapis.com/css2?family=Grand+Hotel&family=Inter:wght@400;500;600;700&display=swap"
           rel="stylesheet"
         />
+        {/* QuSec Web Bridge Runtime */}
+        <script src="/qusec-web-bridge.js" async />
       </head>
       <body className="h-full bg-white antialiased overflow-x-hidden selection:bg-pink-100">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <QuSecBridgeProvider>{children}</QuSecBridgeProvider>
+        </AuthProvider>
       </body>
     </html>
   );

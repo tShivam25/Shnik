@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { mockStore } from '@/lib/mockStore';
 import { useGateway } from '@/lib/gateway';
+import { useQuSecBridge } from '@/components/QuSecBridgeProvider';
 import { Message, Profile, Alert } from '@/lib/types';
 import { Avatar } from '@/components/Avatar';
 import { ChatBubble } from '@/components/ChatBubble';
@@ -19,6 +20,7 @@ import {
   Smile,
   Image as ImageIcon,
   Heart,
+  Cpu,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
@@ -28,6 +30,12 @@ export default function ConversationDetailPage() {
   const otherUserId = params?.userId as string;
   const { user, isMock } = useAuth();
   const { connectionStatus, stageEvents, getStageForMessage } = useGateway();
+  const {
+    status: qusecStatus,
+    onSendClicked,
+    onInitSessionClicked,
+    lastMessage,
+  } = useQuSecBridge();
 
   const [otherUser, setOtherUser] = useState<Profile | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -36,12 +44,56 @@ export default function ConversationDetailPage() {
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showQuSecInfo, setShowQuSecInfo] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior });
   };
+
+  // Register displayChatMessage globally and listen to QuSec incoming messages
+  useEffect(() => {
+    (window as any).displayChatMessage = (from: string, text: string, mode: string) => {
+      const incoming: Message = {
+        id: `qusec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        sender_id: otherUserId,
+        recipient_id: user?.id || 'me',
+        body: text,
+        status: 'delivered',
+        verified: true,
+        session_id: 'qusec-node',
+        stage: 'delivered',
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, incoming]);
+    };
+    return () => {
+      delete (window as any).displayChatMessage;
+    };
+  }, [otherUserId, user?.id]);
+
+  useEffect(() => {
+    if (lastMessage && lastMessage.text) {
+      const incoming: Message = {
+        id: `qusec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        sender_id: otherUserId,
+        recipient_id: user?.id || 'me',
+        body: lastMessage.text,
+        status: 'delivered',
+        verified: true,
+        session_id: 'qusec-node',
+        stage: 'delivered',
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => {
+        if (prev.some((m) => m.body === incoming.body && Math.abs(new Date(m.created_at).getTime() - Date.now()) < 3000)) {
+          return prev;
+        }
+        return [...prev, incoming];
+      });
+    }
+  }, [lastMessage, otherUserId, user?.id]);
 
   const loadData = useCallback(async () => {
     if (!user || !otherUserId) return;
@@ -157,6 +209,14 @@ export default function ConversationDetailPage() {
     setSending(true);
 
     try {
+      // 1. Dispatch over local QuSec bridge node (port 8765)
+      try {
+        await onSendClicked(textToSend, 'teleportation');
+      } catch (bridgeErr) {
+        console.warn('QuSec bridge node send error:', bridgeErr);
+      }
+
+      // 2. Dispatch to application store / Supabase
       if (isMock) {
         mockStore.queueAndSendMessage(
           otherUserId,
@@ -241,7 +301,65 @@ export default function ConversationDetailPage() {
         </div>
 
         {/* Action icons like Instagram Direct */}
-        <div className="flex items-center gap-4 text-gray-900">
+        <div className="flex items-center gap-3 text-gray-900">
+          {/* QuSec Node Hardware Pill */}
+          {qusecStatus && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowQuSecInfo(!showQuSecInfo)}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition"
+                title="QuSec Node & Hardware Status"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-semibold text-[11px]">QuSec Node</span>
+              </button>
+
+              {showQuSecInfo && (
+                <div className="absolute right-0 mt-2 w-64 bg-white border border-[#DBDBDB] rounded-lg shadow-lg p-3 text-xs z-50 space-y-2">
+                  <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+                    <span className="font-semibold text-gray-900">QuSec Terminal Node</span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-green-100 text-green-800 font-medium">Port 8765</span>
+                  </div>
+                  <div className="space-y-1.5 text-gray-600">
+                    <div className="flex justify-between items-center">
+                      <span>Fibre Channel:</span>
+                      <span className={`font-semibold ${qusecStatus.channel?.fibre_ok !== false ? "text-emerald-600" : "text-red-500"}`}>
+                        {qusecStatus.channel?.fibre_ok !== false ? "Fibre OK" : "Offline"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span>ESP32 Device:</span>
+                      <span className={`font-semibold ${qusecStatus.channel?.esp32_ok !== false ? "text-emerald-600" : "text-red-500"}`}>
+                        {qusecStatus.channel?.esp32_ok !== false ? "ESP32 OK" : "Offline"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span>Key Pool:</span>
+                      <span className="font-mono text-gray-900 font-semibold">{qusecStatus.key_pool?.available_bits ?? 1024} bits</span>
+                    </div>
+                    {qusecStatus.session_id && (
+                      <div className="flex justify-between items-center truncate">
+                        <span>Session:</span>
+                        <span className="font-mono text-gray-400 text-[10px] truncate max-w-[120px]">{qusecStatus.session_id}</span>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await onInitSessionClicked();
+                      setShowQuSecInfo(false);
+                    }}
+                    className="w-full mt-2 py-1.5 px-2 rounded bg-black text-white hover:bg-gray-800 text-[11px] font-semibold transition"
+                  >
+                    Init Session
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <button type="button" className="hover:opacity-60" title="Audio call">
             <Phone className="w-5 h-5 stroke-[1.8]" />
           </button>
