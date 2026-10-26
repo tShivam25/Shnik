@@ -12,6 +12,7 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   username text unique not null,
   full_name text not null,
+  email text default null,
   bio text default '',
   avatar_url text default null,
   created_at timestamptz default timezone('utc'::text, now()) not null
@@ -19,6 +20,7 @@ create table if not exists public.profiles (
 
 create index if not exists idx_profiles_username on public.profiles(username);
 create index if not exists idx_profiles_full_name on public.profiles(full_name);
+create index if not exists idx_profiles_email on public.profiles(email);
 
 alter table public.profiles enable row level security;
 
@@ -213,17 +215,19 @@ begin
   raw_username := lower(coalesce(new.raw_user_meta_data->>'username', split_part(new.email, '@', 1)));
   raw_full_name := coalesce(new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'name', raw_username);
 
-  insert into public.profiles (id, username, full_name, bio, avatar_url)
+  insert into public.profiles (id, username, full_name, email, bio, avatar_url)
   values (
     new.id,
     raw_username,
     raw_full_name,
+    lower(new.email),
     coalesce(new.raw_user_meta_data->>'bio', ''),
     coalesce(new.raw_user_meta_data->>'avatar_url', null)
   )
   on conflict (id) do update set
     username = excluded.username,
-    full_name = excluded.full_name;
+    full_name = excluded.full_name,
+    email = excluded.email;
 
   return new;
 end;

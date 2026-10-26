@@ -75,7 +75,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(loggedIn);
       } else {
         const supabase = createClient();
-        const email = usernameOrEmail.includes('@') ? usernameOrEmail : `${usernameOrEmail}@shnik.app`;
+        let email = usernameOrEmail.trim();
+
+        // If user entered a username instead of an email, resolve it
+        if (!email.includes('@')) {
+          try {
+            const res = await fetch('/api/auth/resolve-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ identifier: email }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data?.email) {
+                email = data.email;
+              }
+            }
+          } catch (resErr) {
+            console.warn('Could not resolve username to email:', resErr);
+          }
+        }
+
         const { error } = await supabase.auth.signInWithPassword({
           email,
           password: password || '',

@@ -27,7 +27,13 @@ export default function LoginPage() {
       router.push('/home');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Invalid username or password.';
-      setError(msg);
+      if (msg.toLowerCase().includes('invalid login credentials')) {
+        setError('Invalid credentials. If you used a username, try your email address, or check if email confirmation is enabled in Supabase.');
+      } else if (msg.toLowerCase().includes('email not confirmed')) {
+        setError('Email not confirmed. Please check your inbox or disable email confirmation in Supabase settings.');
+      } else {
+        setError(msg);
+      }
     } finally {
       setSubmitting(false);
     }
