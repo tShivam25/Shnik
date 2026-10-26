@@ -55,7 +55,7 @@ export default function ProfilePage() {
         setEditBio(found.bio || '');
 
         const posts = mockStore.getUserPosts(found.id);
-        setUserPosts(posts.length > 0 ? posts : mockStore.getPosts());
+        setUserPosts(posts);
       }
       setLoading(false);
     } else {
@@ -78,6 +78,12 @@ export default function ProfilePage() {
             .select('*', { count: 'exact', head: true })
             .eq('follower_id', data.id);
 
+          const { data: postsData } = await supabase
+            .from('posts')
+            .select('*')
+            .eq('user_id', data.id)
+            .order('created_at', { ascending: false });
+
           let isFollowing = false;
           if (currentUser) {
             const { data: followRecord } = await supabase
@@ -92,13 +98,30 @@ export default function ProfilePage() {
             ...data,
             followers_count: followersCount || 0,
             following_count: followingCount || 0,
+            posts_count: postsData?.length || 0,
             is_following: isFollowing,
           };
 
           setProfile(decorated);
           setEditFullName(decorated.full_name);
           setEditBio(decorated.bio || '');
-          setUserPosts(mockStore.getPosts());
+
+          if (postsData && postsData.length > 0) {
+            const formatted: Post[] = postsData.map((p) => ({
+              id: p.id,
+              user_id: p.user_id,
+              user: decorated,
+              image_url: p.image_url,
+              caption: p.caption || '',
+              likes_count: 0,
+              is_liked: false,
+              comments: [],
+              created_at: p.created_at,
+            }));
+            setUserPosts(formatted);
+          } else {
+            setUserPosts([]);
+          }
         }
       } catch (err) {
         console.warn('Error fetching profile from Supabase', err);
@@ -221,12 +244,7 @@ export default function ProfilePage() {
     );
   }
 
-  const highlights = [
-    { name: 'Moments', img: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=150&q=80' },
-    { name: 'Trips', img: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?auto=format&fit=crop&w=150&q=80' },
-    { name: 'Studio', img: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=150&q=80' },
-    { name: 'Favorites', img: 'https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&w=150&q=80' },
-  ];
+
 
   return (
     <div className="max-w-[935px] mx-auto py-6 md:py-9 px-4">
@@ -347,27 +365,8 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* Story Highlights */}
-      <div className="py-7 flex gap-7 overflow-x-auto no-scrollbar">
-        {highlights.map((hl, idx) => (
-          <div key={idx} className="flex flex-col items-center gap-1.5 cursor-pointer group">
-            <div className="p-[2px] rounded-full border border-[#DBDBDB]">
-              <div className="w-16 h-16 rounded-full overflow-hidden bg-gray-100">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={hl.img}
-                  alt={hl.name}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                />
-              </div>
-            </div>
-            <span className="text-xs font-medium text-gray-900">{hl.name}</span>
-          </div>
-        ))}
-      </div>
-
       {/* Tabs: POSTS / SAVED / TAGGED */}
-      <div className="flex justify-center border-t border-[#DBDBDB]">
+      <div className="flex justify-center border-t border-[#DBDBDB] mt-6">
         <button
           type="button"
           onClick={() => setActiveTab('posts')}
@@ -408,34 +407,59 @@ export default function ProfilePage() {
         </button>
       </div>
 
-      {/* 3-Column Instagram Photo Grid */}
-      <div className="grid grid-cols-3 gap-1 md:gap-7 mt-1">
-        {userPosts.map((post) => (
-          <div
-            key={post.id}
-            className="relative aspect-square bg-gray-100 group cursor-pointer overflow-hidden"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={post.image_url}
-              alt={post.caption}
-              className="w-full h-full object-cover"
-            />
-
-            {/* Hover Overlay with Likes & Comments Count */}
-            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-6 text-white font-semibold">
-              <span className="flex items-center gap-2">
-                <Heart className="w-5 h-5 fill-white" />
-                {post.likes_count}
-              </span>
-              <span className="flex items-center gap-2">
-                <MessageCircle className="w-5 h-5 fill-white" />
-                {post.comments.length}
-              </span>
-            </div>
+      {/* Posts Content or Clean Empty State */}
+      {userPosts.length === 0 ? (
+        <div className="py-16 text-center space-y-3">
+          <div className="w-16 h-16 rounded-full border-2 border-black flex items-center justify-center mx-auto text-black mb-3">
+            <Camera className="w-8 h-8 stroke-[1.5]" />
           </div>
-        ))}
-      </div>
+          <h3 className="text-xl font-bold text-gray-900">
+            {isOwnProfile ? 'Share Photos' : 'No Posts Yet'}
+          </h3>
+          <p className="text-sm text-gray-500 max-w-sm mx-auto">
+            {isOwnProfile
+              ? 'When you share photos, they will appear on your profile.'
+              : `When @${profile.username} shares photos, you'll see them here.`}
+          </p>
+          {isOwnProfile && (
+            <Link
+              href="/create"
+              className="inline-block mt-2 font-semibold text-sm text-[#0095F6] hover:text-[#1877F2]"
+            >
+              Share your first photo
+            </Link>
+          )}
+        </div>
+      ) : (
+        /* 3-Column Instagram Photo Grid */
+        <div className="grid grid-cols-3 gap-1 md:gap-7 mt-1">
+          {userPosts.map((post) => (
+            <div
+              key={post.id}
+              className="relative aspect-square bg-gray-100 group cursor-pointer overflow-hidden"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={post.image_url}
+                alt={post.caption}
+                className="w-full h-full object-cover"
+              />
+
+              {/* Hover Overlay with Likes & Comments Count */}
+              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-6 text-white font-semibold">
+                <span className="flex items-center gap-2">
+                  <Heart className="w-5 h-5 fill-white" />
+                  {post.likes_count}
+                </span>
+                <span className="flex items-center gap-2">
+                  <MessageCircle className="w-5 h-5 fill-white" />
+                  {post.comments.length}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Edit Profile Modal */}
       {isEditing && (

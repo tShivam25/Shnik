@@ -40,7 +40,36 @@ export default function SearchPage() {
             .neq('id', user.id);
 
           setAllUsers(data || []);
-          setExplorePosts(mockStore.getPosts());
+
+          const { data: exploreData } = await supabase
+            .from('posts')
+            .select('*, profiles:user_id(id, username, full_name, avatar_url)')
+            .order('created_at', { ascending: false })
+            .limit(30);
+
+          if (exploreData && exploreData.length > 0) {
+            const formatted: Post[] = exploreData.map((p) => ({
+              id: p.id,
+              user_id: p.user_id,
+              user: p.profiles || {
+                id: p.user_id,
+                username: 'user',
+                full_name: 'User',
+                bio: '',
+                avatar_url: null,
+                created_at: p.created_at,
+              },
+              image_url: p.image_url,
+              caption: p.caption || '',
+              likes_count: 0,
+              is_liked: false,
+              comments: [],
+              created_at: p.created_at,
+            }));
+            setExplorePosts(formatted);
+          } else {
+            setExplorePosts([]);
+          }
         } catch (err) {
           console.warn('Error fetching search profiles', err);
         } finally {

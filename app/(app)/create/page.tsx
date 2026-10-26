@@ -8,13 +8,13 @@ import { ArrowLeft, Image as ImageIcon } from 'lucide-react';
 
 export default function CreatePostPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, isMock } = useAuth();
   const [imageUrl, setImageUrl] = useState('');
   const [caption, setCaption] = useState('');
   const [sharing, setSharing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!imageUrl.trim()) {
       setError('Please provide an image URL');
@@ -27,10 +27,21 @@ export default function CreatePostPage() {
 
     setSharing(true);
     try {
-      mockStore.createPost({
-        image_url: imageUrl.trim(),
-        caption: caption.trim(),
-      });
+      if (isMock) {
+        mockStore.createPost({
+          image_url: imageUrl.trim(),
+          caption: caption.trim(),
+        });
+      } else {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { error: insertErr } = await supabase.from('posts').insert({
+          user_id: user.id,
+          image_url: imageUrl.trim(),
+          caption: caption.trim(),
+        });
+        if (insertErr) throw insertErr;
+      }
       router.push('/home');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to publish post';
