@@ -35,6 +35,8 @@ export default function ConversationDetailPage() {
     onSendClicked,
     onInitSessionClicked,
     lastMessage,
+    gatewayPort,
+    setGatewayPort,
   } = useQuSecBridge();
 
   const [otherUser, setOtherUser] = useState<Profile | null>(null);
@@ -52,21 +54,35 @@ export default function ConversationDetailPage() {
     messagesEndRef.current?.scrollIntoView({ behavior });
   };
 
-  // Register displayChatMessage globally and listen to QuSec incoming messages
+  // Register displayChatMessage globally and listen to QuSec incoming messages & threat alerts
   useEffect(() => {
-    (window as any).displayChatMessage = (from: string, text: string, mode: string) => {
+    (window as any).displayChatMessage = (from: string, text: string, mode: string, rawMsg?: any) => {
+      const isThreat = rawMsg?.threat || text.includes('[BLOCKED:');
       const incoming: Message = {
-        id: `qusec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        id: rawMsg?.id || `qusec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         sender_id: otherUserId,
         recipient_id: user?.id || 'me',
         body: text,
-        status: 'delivered',
-        verified: true,
-        session_id: 'qusec-node',
-        stage: 'delivered',
+        status: isThreat ? 'failed' : 'delivered',
+        verified: !isThreat,
+        session_id: rawMsg?.session_id || 'qusec-node',
+        stage: isThreat ? 'failed' : 'delivered',
+        stageDetail: isThreat ? (rawMsg?.decision || 'Threat Blocked') : 'Delivered',
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, incoming]);
+
+      if (isThreat) {
+        const threatAlert: Alert = {
+          id: `alert-threat-${Date.now()}`,
+          user_ids: [user?.id || 'me'],
+          message_id: incoming.id,
+          reason: rawMsg?.decision ? `Security Threat Detected: ${rawMsg.decision} (QBER: ${((rawMsg.qber || 0.35) * 100).toFixed(1)}%)` : 'Quantum Channel Tampering Detected: Message Blocked!',
+          severity: 'critical',
+          created_at: new Date().toISOString(),
+        };
+        setAlerts((prev) => [threatAlert, ...prev]);
+      }
     };
     return () => {
       delete (window as any).displayChatMessage;
@@ -75,15 +91,17 @@ export default function ConversationDetailPage() {
 
   useEffect(() => {
     if (lastMessage && lastMessage.text) {
+      const isThreat = lastMessage.threat || lastMessage.text.includes('[BLOCKED:');
       const incoming: Message = {
-        id: `qusec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        id: lastMessage.id || `qusec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         sender_id: otherUserId,
         recipient_id: user?.id || 'me',
         body: lastMessage.text,
-        status: 'delivered',
-        verified: true,
+        status: isThreat ? 'failed' : 'delivered',
+        verified: !isThreat,
         session_id: 'qusec-node',
-        stage: 'delivered',
+        stage: isThreat ? 'failed' : 'delivered',
+        stageDetail: isThreat ? (lastMessage.decision || 'Threat Blocked') : 'Delivered',
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => {
@@ -92,6 +110,21 @@ export default function ConversationDetailPage() {
         }
         return [...prev, incoming];
       });
+
+      if (isThreat) {
+        const threatAlert: Alert = {
+          id: `alert-threat-${Date.now()}`,
+          user_ids: [user?.id || 'me'],
+          message_id: incoming.id,
+          reason: lastMessage.decision ? `Security Threat Detected: ${lastMessage.decision} (QBER: ${((lastMessage.qber || 0.35) * 100).toFixed(1)}%)` : 'Quantum Channel Eavesdropping / Disturbance Detected!',
+          severity: 'critical',
+          created_at: new Date().toISOString(),
+        };
+        setAlerts((prev) => {
+          if (prev.some((a) => a.reason === threatAlert.reason)) return prev;
+          return [threatAlert, ...prev];
+        });
+      }
     }
   }, [lastMessage, otherUserId, user?.id]);
 
@@ -209,9 +242,10 @@ export default function ConversationDetailPage() {
     setSending(true);
 
     try {
-      // 1. Dispatch over local QuSec bridge node (port 8765)
+      // 1. Dispatch over local QuSec bridge node (port 8765 or 8766)
       try {
-        await onSendClicked(textToSend, 'teleportation');
+        const targetRole = otherUser?.username?.toLowerCase().includes('alice') ? 'sender' : 'receiver';
+        await onSendClicked(textToSend, 'teleportation', targetRole);
       } catch (bridgeErr) {
         console.warn('QuSec bridge node send error:', bridgeErr);
       }
@@ -308,40 +342,78 @@ export default function ConversationDetailPage() {
               <button
                 type="button"
                 onClick={() => setShowQuSecInfo(!showQuSecInfo)}
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition"
-                title="QuSec Node & Hardware Status"
+                className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition ${
+                  qusecStatus.status !== 'OFFLINE'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                    : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                }`}
+                title="QuSec Quantum Hardware Bridge Status"
               >
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-semibold text-[11px]">QuSec Node</span>
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    qusecStatus.status !== 'OFFLINE' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                  }`}
+                />
+                <span className="font-semibold text-[11px]">
+                  {qusecStatus.status !== 'OFFLINE' ? `${qusecStatus.role || 'QuSec'}` : 'QuSec Offline'}
+                </span>
+                <span className="text-[10px] text-gray-500">:{gatewayPort}</span>
               </button>
 
               {showQuSecInfo && (
-                <div className="absolute right-0 mt-2 w-64 bg-white border border-[#DBDBDB] rounded-lg shadow-lg p-3 text-xs z-50 space-y-2">
+                <div className="absolute right-0 mt-2 w-72 bg-white border border-[#DBDBDB] rounded-lg shadow-xl p-3 text-xs z-50 space-y-2.5">
                   <div className="flex items-center justify-between pb-2 border-b border-gray-100">
-                    <span className="font-semibold text-gray-900">QuSec Terminal Node</span>
-                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-green-100 text-green-800 font-medium">Port 8765</span>
+                    <span className="font-semibold text-gray-900">
+                      QuSec {qusecStatus.role || 'Terminal Node'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setGatewayPort(gatewayPort === 8765 ? 8766 : 8765)}
+                      className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-gray-100 hover:bg-gray-200 text-gray-800 border border-gray-300 transition"
+                      title="Click to toggle between Sender (8765) and Receiver (8766)"
+                    >
+                      Port {gatewayPort} ⇄ Switch
+                    </button>
                   </div>
                   <div className="space-y-1.5 text-gray-600">
                     <div className="flex justify-between items-center">
+                      <span>Node Status:</span>
+                      <span className={`font-semibold ${qusecStatus.status !== 'OFFLINE' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {qusecStatus.status !== 'OFFLINE' ? 'Connected (Live)' : 'Offline / Standalone'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
                       <span>Fibre Channel:</span>
-                      <span className={`font-semibold ${qusecStatus.channel?.fibre_ok !== false ? "text-emerald-600" : "text-red-500"}`}>
-                        {qusecStatus.channel?.fibre_ok !== false ? "Fibre OK" : "Offline"}
+                      <span className={`font-semibold ${qusecStatus.channel?.fibre_ok ? 'text-emerald-600' : 'text-gray-400'}`}>
+                        {qusecStatus.channel?.fibre_ok ? 'Fibre OK' : 'Simulated'}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span>ESP32 Device:</span>
-                      <span className={`font-semibold ${qusecStatus.channel?.esp32_ok !== false ? "text-emerald-600" : "text-red-500"}`}>
-                        {qusecStatus.channel?.esp32_ok !== false ? "ESP32 OK" : "Offline"}
+                      <span className={`font-semibold ${qusecStatus.channel?.esp32_ok ? 'text-emerald-600' : 'text-gray-400'}`}>
+                        {qusecStatus.channel?.esp32_ok ? 'ESP32 OK' : 'Simulated'}
                       </span>
                     </div>
+                    {qusecStatus.channel?.qber !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span>Current QBER:</span>
+                        <span className={`font-mono font-semibold ${qusecStatus.channel.qber > 0.06 ? 'text-red-600' : 'text-emerald-600'}`}>
+                          {(qusecStatus.channel.qber * 100).toFixed(1)}% {qusecStatus.channel.qber > 0.06 ? '⚠️ (Threat!)' : '✓ (Secure)'}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between items-center">
                       <span>Key Pool:</span>
-                      <span className="font-mono text-gray-900 font-semibold">{qusecStatus.key_pool?.available_bits ?? 1024} bits</span>
+                      <span className="font-mono text-gray-900 font-semibold">
+                        {qusecStatus.key_pool?.available_bits?.toLocaleString() ?? 0} bits
+                      </span>
                     </div>
                     {qusecStatus.session_id && (
                       <div className="flex justify-between items-center truncate">
                         <span>Session:</span>
-                        <span className="font-mono text-gray-400 text-[10px] truncate max-w-[120px]">{qusecStatus.session_id}</span>
+                        <span className="font-mono text-gray-400 text-[10px] truncate max-w-[130px]">
+                          {qusecStatus.session_id}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -353,7 +425,7 @@ export default function ConversationDetailPage() {
                     }}
                     className="w-full mt-2 py-1.5 px-2 rounded bg-black text-white hover:bg-gray-800 text-[11px] font-semibold transition"
                   >
-                    Init Session
+                    Initialize Session & Keys
                   </button>
                 </div>
               )}

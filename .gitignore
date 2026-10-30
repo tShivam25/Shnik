@@ -33,3 +33,7 @@ yarn-error.log*
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Backups
+Shnik 31-10 changes/
+

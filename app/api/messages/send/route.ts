@@ -40,7 +40,14 @@ export async function POST(req: NextRequest) {
     // Verify sender
     const senderId = user ? user.id : from;
 
-    // Insert message into DB as 'in_transit'
+    // Forward to Python QuSec Gateway if configured
+    const gatewayUrl = process.env.QUSEC_SENDER_URL;
+    const gatewayToken = process.env.QUSEC_TOKEN || '';
+    const isLiveGateway = !!gatewayUrl && !gatewayUrl.includes('placeholder') && !gatewayUrl.includes('localhost:8000');
+
+    // Insert message into DB. If no external gateway webhook is configured, mark as 'delivered' so recipient RLS allows reading.
+    const initialStatus = isLiveGateway ? 'in_transit' : 'delivered';
+
     const admin = createAdminClient();
     const { data: insertedMessage, error: insertError } = await admin
       .from('messages')
@@ -48,8 +55,8 @@ export async function POST(req: NextRequest) {
         sender_id: senderId,
         recipient_id: to,
         body: text,
-        status: 'in_transit',
-        verified: null,
+        status: initialStatus,
+        verified: initialStatus === 'delivered' ? true : null,
         session_id: `q-sess-${Date.now().toString(36)}`,
       })
       .select('*')
@@ -60,11 +67,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Database error creating message' }, { status: 500 });
     }
 
-    // Forward to Python QuSec Gateway if configured
-    const gatewayUrl = process.env.QUSEC_SENDER_URL;
-    const gatewayToken = process.env.QUSEC_TOKEN || '';
-
-    if (gatewayUrl && !gatewayUrl.includes('localhost:8000')) {
+    if (isLiveGateway) {
       try {
         const gwRes = await fetch(gatewayUrl, {
           method: 'POST',
@@ -76,7 +79,9 @@ export async function POST(req: NextRequest) {
             id: insertedMessage.id,
             from: senderId,
             to,
+            message: text,
             text,
+            mode: 'teleportation',
             forceFailure: !!forceFailure,
           }),
         });

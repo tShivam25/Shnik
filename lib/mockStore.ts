@@ -1,11 +1,7 @@
 import { Profile, Message, Alert, QuantumStage, QuantumStatusEvent, Post } from './types';
+import { INITIAL_MOCK_USERS, INITIAL_FOLLOWS, RegisteredUserRecord } from './mockData';
 
 type Listener = () => void;
-
-interface RegisteredUserRecord extends Profile {
-  email: string;
-  passwordHash: string;
-}
 
 class MockStore {
   private users: RegisteredUserRecord[] = [];
@@ -19,8 +15,45 @@ class MockStore {
   private inFlightMessageId: string | null = null;
   private queue: { message: Message; onDone: () => void }[] = [];
 
+  private broadcastChannel: BroadcastChannel | null = null;
+
   constructor() {
     this.init();
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        this.broadcastChannel = new BroadcastChannel('shnik_sync');
+        this.broadcastChannel.onmessage = (event) => {
+          if (event.data?.type === 'SYNC_STATE') {
+            this.reloadFromStorage();
+          }
+        };
+      } catch (err) {
+        console.warn('BroadcastChannel error', err);
+      }
+    }
+  }
+
+  private reloadFromStorage() {
+    if (typeof window === 'undefined') return;
+    try {
+      const storedUsers = localStorage.getItem('shnik_real_users');
+      const storedFollows = localStorage.getItem('shnik_real_follows');
+      const storedMessages = localStorage.getItem('shnik_real_messages');
+      const storedAlerts = localStorage.getItem('shnik_real_alerts');
+      const storedPosts = localStorage.getItem('shnik_real_posts');
+
+      if (storedUsers) {
+        const loaded: RegisteredUserRecord[] = JSON.parse(storedUsers);
+        this.users = loaded.filter(
+          (u) => u.id !== 'user-alice' && u.id !== 'user-bob' && u.id !== 'user-eve'
+        );
+      }
+      if (storedFollows) this.follows = new Set(JSON.parse(storedFollows));
+      if (storedMessages) this.messages = JSON.parse(storedMessages);
+      if (storedAlerts) this.alerts = JSON.parse(storedAlerts);
+      if (storedPosts) this.posts = JSON.parse(storedPosts);
+      this.notify();
+    } catch (_) {}
   }
 
   private init() {
@@ -33,25 +66,54 @@ class MockStore {
         const storedPosts = localStorage.getItem('shnik_real_posts');
         const storedCurrentUserId = localStorage.getItem('shnik_real_current_user_id');
 
-        this.users = storedUsers ? JSON.parse(storedUsers) : [];
+        const loadedUsers: RegisteredUserRecord[] = storedUsers ? JSON.parse(storedUsers) : [];
+        this.users = loadedUsers.filter(
+          (u) => u.id !== 'user-alice' && u.id !== 'user-bob' && u.id !== 'user-eve'
+        );
         this.follows = storedFollows ? new Set(JSON.parse(storedFollows)) : new Set();
         this.messages = storedMessages ? JSON.parse(storedMessages) : [];
         this.alerts = storedAlerts ? JSON.parse(storedAlerts) : [];
         this.posts = storedPosts ? JSON.parse(storedPosts) : [];
-        this.currentUserId = storedCurrentUserId || null;
 
-        // Clean out any old mock data from previous versions
-        localStorage.removeItem('qusec_mock_users');
-        localStorage.removeItem('qusec_mock_follows');
-        localStorage.removeItem('qusec_mock_messages');
-        localStorage.removeItem('qusec_mock_alerts');
-        localStorage.removeItem('qusec_mock_current_user_id');
-        localStorage.removeItem('shnik_users');
-        localStorage.removeItem('shnik_follows');
-        localStorage.removeItem('shnik_messages');
-        localStorage.removeItem('shnik_alerts');
-        localStorage.removeItem('shnik_posts');
-        localStorage.removeItem('shnik_current_user_id');
+        const validStoredUserId =
+          storedCurrentUserId &&
+          storedCurrentUserId !== 'user-alice' &&
+          storedCurrentUserId !== 'user-bob' &&
+          storedCurrentUserId !== 'user-eve'
+            ? storedCurrentUserId
+            : null;
+
+        // Support URL parameter override for tab testing if matching user exists: ?as=username
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlAs = urlParams.get('as') || urlParams.get('user');
+        const sessionUserId = sessionStorage.getItem('shnik_session_user_id');
+
+        if (urlAs) {
+          const match = this.users.find((u) => u.username.toLowerCase() === urlAs.toLowerCase() || u.id === urlAs);
+          if (match) {
+            this.currentUserId = match.id;
+            sessionStorage.setItem('shnik_session_user_id', match.id);
+          } else {
+            this.currentUserId = validStoredUserId;
+          }
+        } else if (
+          sessionUserId &&
+          sessionUserId !== 'user-alice' &&
+          sessionUserId !== 'user-bob' &&
+          sessionUserId !== 'user-eve'
+        ) {
+          this.currentUserId = sessionUserId;
+        } else {
+          this.currentUserId = validStoredUserId;
+        }
+
+        // Listen for cross-window localStorage changes
+        window.addEventListener('storage', (e) => {
+          if (e.key?.startsWith('shnik_real_')) {
+            this.reloadFromStorage();
+          }
+        });
+
       } catch (e) {
         console.warn('Could not read user data from localStorage', e);
         this.users = [];
@@ -78,6 +140,11 @@ class MockStore {
       }
     }
     this.notify();
+    if (this.broadcastChannel) {
+      try {
+        this.broadcastChannel.postMessage({ type: 'SYNC_STATE' });
+      } catch (_) {}
+    }
   }
 
   public subscribe(listener: Listener): () => void {

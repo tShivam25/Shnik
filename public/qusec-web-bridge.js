@@ -1,188 +1,255 @@
 /**
- * QuSec Web Bridge - Client Runtime Bridge
- * Connects browser frontend to the local QuSec node running in your terminal (port 8765).
+ * QuSec Web Bridge SDK for Shnik Social Media Platform
+ * ----------------------------------------------------
+ * Connects the browser frontend to the local QuSec Quantum Security Node running in your terminal.
+ *
+ * Default Gateway Ports:
+ *   - Sender Node (Alice):   http://127.0.0.1:8765
+ *   - Receiver Node (Bob):   http://127.0.0.1:8766 (on localhost loopback) or 8765 on separate laptop
  */
+
 class QuSecBridge {
-  constructor(baseUrl = "http://127.0.0.1:8765") {
-    this.baseUrl = baseUrl.replace(/\/$/, "");
-    this.wsUrl = this.baseUrl.replace(/^http/, "ws");
-    this.statusCallbacks = [];
-    this.messageCallbacks = [];
-    this.ws = null;
+  constructor(gatewayUrl = "http://127.0.0.1:8765") {
+    this.gatewayUrl = gatewayUrl.replace(/\/$/, "");
+    this.statusListeners = [];
+    this.messageListeners = [];
+    this.eventListeners = [];
+    this.eventSource = null;
     this.pollInterval = null;
     this.isConnected = false;
+    this.nodeRole = null;
+    this.peerRole = null;
     this.currentStatus = {
+      status: "OFFLINE",
       session_id: null,
-      channel: { fibre_ok: false, esp32_ok: false },
+      role: "Node",
+      peer_role: "Peer",
+      channel: { fibre_ok: false, esp32_ok: false, qber: 0.0 },
       key_pool: { available_bits: 0 }
     };
   }
 
+  /** Set new gateway URL (e.g. switch between 8765 and 8766) and reconnect */
+  setGatewayUrl(newUrl) {
+    if (!newUrl) return;
+    this.gatewayUrl = newUrl.replace(/\/$/, "");
+    this.stop();
+    this.start();
+  }
+
+  /** Register listener for node status changes (fibre, ESP32, key pool, QBER) */
   onStatus(callback) {
     if (typeof callback === 'function') {
-      this.statusCallbacks.push(callback);
-      if (this.currentStatus && this.currentStatus.session_id) {
+      this.statusListeners.push(callback);
+      if (this.currentStatus && this.currentStatus.status !== "OFFLINE") {
         try { callback(this.currentStatus); } catch (e) { console.error(e); }
       }
     }
   }
 
+  /** Register listener for incoming quantum decrypted messages & threat alerts */
   onMessage(callback) {
     if (typeof callback === 'function') {
-      this.messageCallbacks.push(callback);
+      this.messageListeners.push(callback);
     }
   }
 
-  start() {
-    this._connectWs();
-    this._startPolling();
+  /** Register listener for all low-level quantum pipeline events */
+  onEvent(callback) {
+    if (typeof callback === 'function') {
+      this.eventListeners.push(callback);
+    }
   }
 
-  _connectWs() {
+  /** Start listening to QuSec node via SSE stream and status polling */
+  async start() {
+    await this.fetchStatus();
+    this.startEventStream();
+    if (!this.pollInterval) {
+      this.pollInterval = setInterval(() => this.fetchStatus(), 3000);
+    }
+  }
+
+  /** Stop listeners & close SSE connection */
+  stop() {
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+    this.isConnected = false;
+  }
+
+  /** Fetch live status from local QuSec node */
+  async fetchStatus() {
     try {
-      const wsEndpoint = `${this.wsUrl}/ws`;
-      this.ws = new WebSocket(wsEndpoint);
+      const res = await fetch(`${this.gatewayUrl}/api/status`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store'
+      });
 
-      this.ws.onopen = () => {
+      if (res.ok) {
+        const data = await res.json();
         this.isConnected = true;
-        console.log("[QuSecBridge] Connected to local node at", this.baseUrl);
+        this.nodeRole = data.role || "Node";
+        this.peerRole = data.peer_role || (this.nodeRole === "Sender" ? "Receiver" : "Sender");
+        this.currentStatus = {
+          ...data,
+          channel: {
+            fibre_ok: data.channel?.fibre_ok ?? false,
+            esp32_ok: data.channel?.esp32_ok ?? false,
+            qber: data.channel?.qber ?? 0.0,
+          },
+          key_pool: {
+            available_bits: data.key_pool?.available_bits ?? 0,
+          }
+        };
+
+        this.statusListeners.forEach((cb) => {
+          try { cb(this.currentStatus); } catch (e) { console.error(e); }
+        });
+        return this.currentStatus;
+      }
+    } catch (_) {
+      this.isConnected = false;
+      const offlineStatus = {
+        status: "OFFLINE",
+        session_id: null,
+        role: this.nodeRole || "Offline",
+        channel: { fibre_ok: false, esp32_ok: false, qber: 0.0 },
+        key_pool: { available_bits: 0 },
+        error: "Cannot connect to local QuSec node at " + this.gatewayUrl
+      };
+      this.currentStatus = offlineStatus;
+      this.statusListeners.forEach((cb) => {
+        try { cb(offlineStatus); } catch (e) { console.error(e); }
+      });
+    }
+    return null;
+  }
+
+  /** Subscribe to Server-Sent Events (SSE) stream for real-time messages & alerts */
+  startEventStream() {
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+
+    if (typeof EventSource === 'undefined') return;
+
+    try {
+      this.eventSource = new EventSource(`${this.gatewayUrl}/api/events`);
+
+      this.eventSource.onopen = () => {
+        this.isConnected = true;
+        console.log("[QuSecBridge] SSE stream connected to", this.gatewayUrl);
       };
 
-      this.ws.onmessage = (event) => {
+      this.eventSource.onmessage = (e) => {
         try {
-          const data = JSON.parse(event.data);
-          this._handleIncoming(data);
-        } catch (e) {
-          console.warn("[QuSecBridge] Non-JSON payload received:", event.data);
+          if (!e.data || e.data.startsWith(":")) return; // ignore keepalive comments
+          const packet = JSON.parse(e.data);
+
+          this.eventListeners.forEach((cb) => {
+            try { cb(packet); } catch (err) { console.error(err); }
+          });
+
+          if (packet.event === "message_received" && packet.data) {
+            console.log("[QuSecBridge] Quantum message received:", packet.data);
+            this.messageListeners.forEach((cb) => {
+              try { cb(packet.data); } catch (err) { console.error(err); }
+            });
+          } else if (packet.event === "threat_alarm" || packet.event === "threat_detected") {
+            console.warn("[QuSecBridge] Threat Alarm event:", packet.data);
+            this.fetchStatus();
+          } else if (packet.event === "session_established") {
+            this.fetchStatus();
+          }
+        } catch (_) {
+          // Heartbeat or raw non-JSON
         }
       };
 
-      this.ws.onclose = () => {
-        this.isConnected = false;
-        setTimeout(() => this._connectWs(), 4000);
-      };
-
-      this.ws.onerror = () => {
-        if (this.ws && this.ws.url.endsWith('/ws')) {
-          try {
-            this.ws = new WebSocket(this.wsUrl);
-          } catch (_) {}
+      this.eventSource.onerror = () => {
+        if (this.eventSource) {
+          this.eventSource.close();
+          this.eventSource = null;
         }
+        // Retry connection after brief backoff
+        setTimeout(() => {
+          this.startEventStream();
+        }, 4000);
       };
     } catch (err) {
-      console.warn("[QuSecBridge] WebSocket connection attempt:", err);
+      console.warn("[QuSecBridge] EventSource initialization failed:", err);
     }
   }
 
-  _startPolling() {
-    if (this.pollInterval) clearInterval(this.pollInterval);
-
-    const poll = async () => {
-      try {
-        const res = await fetch(`${this.baseUrl}/status`, {
-          method: 'GET',
-          headers: { 'Accept': 'application/json' },
-          cache: 'no-store'
-        });
-        if (res.ok) {
-          const status = await res.json();
-          this._handleStatus(status);
-        }
-      } catch (_) {
-        // Local node might be offline or starting up
-      }
-    };
-
-    poll();
-    this.pollInterval = setInterval(poll, 3000);
-  }
-
-  _handleIncoming(data) {
-    if (!data) return;
-
-    if (data.session_id || data.channel || data.key_pool || data.type === 'status') {
-      this._handleStatus(data);
-    }
-
-    if (data.from && (data.text || data.message || data.msg)) {
-      const msg = {
-        from: data.from,
-        text: data.text || data.message || data.msg,
-        mode: data.mode || "teleportation"
-      };
-      this.messageCallbacks.forEach(cb => {
-        try { cb(msg); } catch (e) { console.error(e); }
-      });
-    }
-  }
-
-  _handleStatus(status) {
-    this.currentStatus = {
-      session_id: status.session_id || status.sessionId || 'qusec-node-session',
-      channel: {
-        fibre_ok: status.channel?.fibre_ok ?? status.fibre_ok ?? true,
-        esp32_ok: status.channel?.esp32_ok ?? status.esp32_ok ?? true,
-      },
-      key_pool: {
-        available_bits: status.key_pool?.available_bits ?? status.available_bits ?? 1024,
-      },
-      ...status
-    };
-
-    this.statusCallbacks.forEach(cb => {
-      try { cb(this.currentStatus); } catch (e) { console.error(e); }
-    });
-  }
-
-  async initSession() {
-    console.log("[QuSecBridge] Initializing quantum session...");
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ action: "init_session", type: "init" }));
-    }
-    try {
-      const res = await fetch(`${this.baseUrl}/init`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: "init_session" })
-      });
-      return await res.json();
-    } catch (e) {
-      console.warn("[QuSecBridge] Session init fallback:", e);
-      return { ok: true, session_id: 'local-qusec-session' };
-    }
-  }
-
-  async sendMessage(userText, mode = "teleportation") {
-    console.log(`[QuSecBridge] Sending message via ${mode}:`, userText);
+  /**
+   * Send a chat message over the quantum link.
+   * @param {string} text - Message plaintext to transmit
+   * @param {string} mode - 'teleportation' (state teleportation) or 'otp' (One-Time-Pad)
+   * @param {string} recipient - Optional explicit target peer ('receiver' or 'sender')
+   */
+  async sendMessage(text, mode = "teleportation", recipient = null) {
     const payload = {
-      action: "send_message",
-      text: userText,
+      to: recipient || this.peerRole || (this.nodeRole === "Sender" ? "Receiver" : "Sender"),
+      message: text,
       mode: mode,
-      timestamp: new Date().toISOString()
     };
 
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(payload));
+    console.log(`[QuSecBridge] Dispatching ${mode} message to ${payload.to} via ${this.gatewayUrl}/api/send`);
+    const res = await fetch(`${this.gatewayUrl}/api/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to send message: ${res.statusText}`);
     }
 
-    try {
-      const res = await fetch(`${this.baseUrl}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      return await res.json();
-    } catch (e) {
-      console.warn("[QuSecBridge] Send HTTP fallback:", e);
-      return { ok: true, fallback: true };
+    return await res.json();
+  }
+
+  /** Trigger quantum session initialization and key pool generation */
+  async initSession() {
+    const res = await fetch(`${this.gatewayUrl}/api/session/init`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to init session: ${res.statusText}`);
     }
+    return await res.json();
+  }
+
+  /** Fetch past message history from node cache */
+  async getMessages() {
+    try {
+      const res = await fetch(`${this.gatewayUrl}/api/messages`);
+      if (res.ok) {
+        const data = await res.json();
+        return data.messages || [];
+      }
+    } catch (_) {}
+    return [];
   }
 }
 
-// Attach globally for script tags and browser console access
-if (typeof window !== 'undefined') {
+// Export for ES modules and browser window
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { QuSecBridge };
+}
+if (typeof window !== "undefined") {
   window.QuSecBridge = QuSecBridge;
 }
-if (typeof globalThis !== 'undefined') {
+if (typeof globalThis !== "undefined") {
   globalThis.QuSecBridge = QuSecBridge;
 }
