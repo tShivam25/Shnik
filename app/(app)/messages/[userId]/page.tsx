@@ -69,6 +69,9 @@ export default function ConversationDetailPage() {
         stage: isThreat ? 'failed' : 'delivered',
         stageDetail: isThreat ? (rawMsg?.decision || 'Threat Blocked') : 'Delivered',
         created_at: new Date().toISOString(),
+        qusec_report: rawMsg?.qusec_report || rawMsg?.last_security_report || null,
+        qber: rawMsg?.qber,
+        mode: mode || rawMsg?.mode || 'teleportation',
       };
       setMessages((prev) => [...prev, incoming]);
 
@@ -103,6 +106,9 @@ export default function ConversationDetailPage() {
         stage: isThreat ? 'failed' : 'delivered',
         stageDetail: isThreat ? (lastMessage.decision || 'Threat Blocked') : 'Delivered',
         created_at: new Date().toISOString(),
+        qusec_report: lastMessage.qusec_report || null,
+        qber: lastMessage.qber,
+        mode: lastMessage.mode || 'teleportation',
       };
       setMessages((prev) => {
         if (prev.some((m) => m.body === incoming.body && Math.abs(new Date(m.created_at).getTime() - Date.now()) < 3000)) {
@@ -244,7 +250,14 @@ export default function ConversationDetailPage() {
     try {
       // 1. Dispatch over local QuSec bridge node (port 8765 or 8766)
       try {
-        const targetRole = otherUser?.username?.toLowerCase().includes('alice') ? 'sender' : 'receiver';
+        let targetRole = 'receiver';
+        if (qusecStatus?.peer_role) {
+          targetRole = qusecStatus.peer_role.toLowerCase();
+        } else if (qusecStatus?.role) {
+          targetRole = qusecStatus.role.toLowerCase() === 'sender' ? 'receiver' : 'sender';
+        } else if (otherUser?.username?.toLowerCase().includes('alice')) {
+          targetRole = 'sender';
+        }
         await onSendClicked(textToSend, 'teleportation', targetRole);
       } catch (bridgeErr) {
         console.warn('QuSec bridge node send error:', bridgeErr);
@@ -377,11 +390,39 @@ export default function ConversationDetailPage() {
                   </div>
                   <div className="space-y-1.5 text-gray-600">
                     <div className="flex justify-between items-center">
+                      <span>Local Role:</span>
+                      <span className="font-semibold text-gray-900">
+                        {qusecStatus.role || 'Dual-Mode'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span>Peer Target:</span>
+                      <span className="font-semibold text-cyan-600">
+                        {qusecStatus.peer_role || (qusecStatus.role === 'Sender' ? 'Receiver' : 'Sender')}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
                       <span>Node Status:</span>
                       <span className={`font-semibold ${qusecStatus.status !== 'OFFLINE' ? 'text-emerald-600' : 'text-amber-600'}`}>
                         {qusecStatus.status !== 'OFFLINE' ? 'Connected (Live)' : 'Offline / Standalone'}
                       </span>
                     </div>
+                    {qusecStatus.dynamic_threshold?.q_threshold !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span>Dynamic Q_th:</span>
+                        <span className="font-mono font-semibold text-gray-900">
+                          {(qusecStatus.dynamic_threshold.q_threshold * 100).toFixed(2)}%
+                        </span>
+                      </div>
+                    )}
+                    {qusecStatus.dynamic_threshold?.traffic_rate_msgs_per_sec !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span>Channel Traffic (Φ):</span>
+                        <span className="font-mono text-gray-600">
+                          {qusecStatus.dynamic_threshold.traffic_rate_msgs_per_sec.toFixed(2)} msgs/s
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between items-center">
                       <span>Fibre Channel:</span>
                       <span className={`font-semibold ${qusecStatus.channel?.fibre_ok ? 'text-emerald-600' : 'text-gray-400'}`}>
@@ -397,8 +438,8 @@ export default function ConversationDetailPage() {
                     {qusecStatus.channel?.qber !== undefined && (
                       <div className="flex justify-between items-center">
                         <span>Current QBER:</span>
-                        <span className={`font-mono font-semibold ${qusecStatus.channel.qber > 0.06 ? 'text-red-600' : 'text-emerald-600'}`}>
-                          {(qusecStatus.channel.qber * 100).toFixed(1)}% {qusecStatus.channel.qber > 0.06 ? '⚠️ (Threat!)' : '✓ (Secure)'}
+                        <span className={`font-mono font-semibold ${qusecStatus.channel.qber > (qusecStatus.dynamic_threshold?.q_threshold || 0.06) ? 'text-red-600' : 'text-emerald-600'}`}>
+                          {(qusecStatus.channel.qber * 100).toFixed(1)}% {qusecStatus.channel.qber > (qusecStatus.dynamic_threshold?.q_threshold || 0.06) ? '⚠️ (Threat!)' : '✓ (Secure)'}
                         </span>
                       </div>
                     )}

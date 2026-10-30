@@ -7,14 +7,31 @@ export interface QuSecStatus {
   role?: string;
   peer_role?: string;
   session_id?: string | null;
+  dynamic_threshold?: {
+    q_threshold?: number;
+    traffic_rate_msgs_per_sec?: number;
+    auto_adjusting?: boolean;
+    formula?: string;
+    status?: string;
+  };
   channel?: {
     fibre_ok?: boolean;
     esp32_ok?: boolean;
     qber?: number;
+    fidelity?: number;
+    chsh?: number;
+    trusted?: boolean;
   };
   key_pool?: {
     available_bits?: number;
   };
+  quantum_keys?: {
+    public_key?: string;
+    peer_public_key?: string;
+    encryption_scheme?: string;
+    signature_scheme?: string;
+  };
+  last_security_report?: any;
   error?: string;
 }
 
@@ -27,6 +44,7 @@ export interface QuSecMessage {
   threat?: boolean;
   qber?: number;
   decision?: string;
+  qusec_report?: any;
 }
 
 interface QuSecBridgeContextType {
@@ -56,14 +74,19 @@ export function QuSecBridgeProvider({ children }: { children: React.ReactNode })
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const qusecRef = useRef<any>(null);
 
-  // Initialize port from query param or localStorage
+  // Initialize port from query param, user identity, or localStorage
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const urlParams = new URLSearchParams(window.location.search);
     const paramPort = urlParams.get('qusec_port') || urlParams.get('port');
     const savedPort = localStorage.getItem('qusec_gateway_port');
+    const asUser = urlParams.get('as');
 
-    const initialPort = paramPort ? parseInt(paramPort, 10) : (savedPort ? parseInt(savedPort, 10) : 8765);
+    let initialPort = paramPort ? parseInt(paramPort, 10) : (savedPort ? parseInt(savedPort, 10) : null);
+    if (!initialPort) {
+      initialPort = (asUser === 'bob') ? 8766 : 8765;
+    }
+
     if (!isNaN(initialPort) && (initialPort === 8765 || initialPort === 8766 || initialPort > 1024)) {
       setGatewayPortState(initialPort);
     }
@@ -82,6 +105,8 @@ export function QuSecBridgeProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    let probeAttempted = false;
+
     const initBridge = () => {
       const BridgeClass = (window as any).QuSecBridge;
       if (!BridgeClass) return;
@@ -96,7 +121,23 @@ export function QuSecBridgeProvider({ children }: { children: React.ReactNode })
         // 1. Listen for live hardware and session status
         qusec.onStatus((newStatus: any) => {
           setStatus(newStatus);
-          setIsConnected(newStatus.status !== 'OFFLINE');
+          const online = newStatus.status !== 'OFFLINE';
+          setIsConnected(online);
+
+          // Auto-probe alternate port if local port is offline
+          if (!online && !probeAttempted && (gatewayPort === 8765 || gatewayPort === 8766)) {
+            probeAttempted = true;
+            const altPort = (gatewayPort === 8765) ? 8766 : 8765;
+            fetch(`http://127.0.0.1:${altPort}/api/status`)
+              .then(res => res.json())
+              .then(data => {
+                if (data && data.status === 'ONLINE') {
+                  console.log(`[QuSecBridge] Auto-detected active QuSec node on port ${altPort}`);
+                  setGatewayPort(altPort);
+                }
+              })
+              .catch(() => {});
+          }
         });
 
         // 2. Listen for incoming decrypted chat messages from the peer

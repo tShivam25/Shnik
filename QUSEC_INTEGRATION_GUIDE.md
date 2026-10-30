@@ -179,44 +179,51 @@ npm run dev
 
 1. **Laptop 1 (Alice / Sender)**:
    - Connect ESP32 #1 via USB and Media Converter #1 via Ethernet.
-   - Run: `qusec chat --role sender`
+   - Run: `qusec node --peer-host <BOB_IP> --role dual --port 8765`
    - Start Shnik: `npm run dev`
    - Open: `http://localhost:3000/messages/user-bob?as=alice`
 2. **Laptop 2 (Bob / Receiver)**:
    - Connect ESP32 #2 via USB and Media Converter #2 via Ethernet.
-   - Run: `qusec chat --role receiver --peer-host <ALICE_IP>`
+   - Run: `qusec node --peer-host <ALICE_IP> --role dual --port 8766`
    - Start Shnik: `npm run dev`
    - Open: `http://localhost:3000/messages/user-alice?as=bob`
-3. **Laptop 3 or Terminal (Eve / Attacker)**:
-   - Connect ESP32 #3 via USB.
-   - Run: `python attacker_eve.py --target-host <BOB_IP> --target-classical-port 9877`
+3. **Laptop 3 (Eve / Attacker)**:
+   - Connect ESP32 #3 via USB (flashed with `qusec-attacker/firmware/esp32_attacker/esp32_attacker.ino`).
+   - Run: `qusec-attacker --target-host <BOB_IP>`
 
 ---
 
-### D. Demonstrating Cyber Attacks (Eve)
+### D. Demonstrating Cyber Attacks with the Claude Code TUI (Eve)
 
-Open a terminal and start the interactive adversary tool:
-```powershell
-python d:\College\Programming\QuSec-Quantum-Cyber-Threat-Detection-main\attacker_eve.py --target-classical-port 9879
+On Laptop 3, launch the standalone `qusec-attacker` adversary console:
+```bash
+qusec-attacker --target-host <BOB_IP>
 ```
-*(Use port `9877` if testing across separate physical machines).*
 
 ```text
-╔════════════════════════════════════════════════════════════════════╗
-║             QuSec Quantum Cyber Attack Demonstrator (Eve)          ║
-╚════════════════════════════════════════════════════════════════════╝
+╭─ ⚡ QUSEC ATTACKER · Eve Adversary Engine · Claude Code TUI ────────────────────────────╮
+│ Real-world tampering, intercept-resend, Pauli bit manipulation & hardware TRNG jamming │
+│                                                                                        │
+│ Target Host:    192.168.4.2           Attacker ESP32: Connected (/dev/ttyUSB0)         │
+│ Classical Port: 9877                  Dynamic Q_th:   8.72% (Auto-Adapted)             │
+│ Optical Port:   9876                  Auto-Attacks:   ACTIVE (In-Between Chats)        │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+Type /help to view attack vectors, or /attack <type> to execute.
 
-Select Attack Demonstration Vector:
-[1] Intercept-Resend & QBER Disturbance (Triggers Bob's ESP32 Threat Alarm)
-[2] Classical Pauli Coordinate Tampering (Flips c0/c1 bits)
-[3] Impersonation & Forgery Attack (Spoofed Alice + Invalid MAC)
-[4] Classical Replay Attack (Stale / Duplicate Packet)
-[5] Start / Stop Real-Time MITM Proxy & Packet Sniffer
-[6] Channel Jamming Burst (ESP32 Hardware TRNG Flood)
-[7] Test Attacker ESP32 Hardware (TRNG Entropy + Alarm LED)
-[8] Configure Target Host & Ports
-[0] Exit
+╭─ qusec-attacker · Eve Adversary
+╰─ ❯ 
 ```
+
+#### Slash Commands in Claude Code TUI:
+- `/attack qber [rate]` — Intercept optical photons and inject conjugate state collapse
+- `/attack tamper [ratio]` — Flip classical feed-forward Pauli coordinates ($c_0, c_1$)
+- `/attack forgery [message]` — Send forged packet with invalid Wegman-Carter MAC
+- `/attack replay` — Re-inject previously captured frame with expired nonce
+- `/attack jam [count]` — Emit high-frequency hardware TRNG entropy jamming bursts
+- `/random on 8 20` — **Automated in-between chat attacks**: Randomly tampers with chats every 8–20s
+- `/mitm start` — Start transparent hardware packet proxy and live packet sniffer
+- `/threshold` — Inspect mathematical Hoeffding margin & dynamic QBER threshold proof
+- `/stats` — Print real-time attack telemetry and injected packet counts
 
 #### Attack 1: Intercept-Resend (State Collapse & QBER Spike)
 * Select `[1]` and press Enter.

@@ -198,16 +198,38 @@ class QuSecBridge {
   async sendMessage(text, mode = "teleportation", recipient = null) {
     const payload = {
       to: recipient || this.peerRole || (this.nodeRole === "Sender" ? "Receiver" : "Sender"),
+      text: text,
       message: text,
       mode: mode,
     };
 
     console.log(`[QuSecBridge] Dispatching ${mode} message to ${payload.to} via ${this.gatewayUrl}/api/send`);
-    const res = await fetch(`${this.gatewayUrl}/api/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    let res;
+    try {
+      res = await fetch(`${this.gatewayUrl}/api/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (netErr) {
+      // Auto-fallback to counterpart port (8765 <-> 8766) if local gateway unreachable
+      const altUrl = this.gatewayUrl.includes(":8765")
+        ? this.gatewayUrl.replace(":8765", ":8766")
+        : (this.gatewayUrl.includes(":8766") ? this.gatewayUrl.replace(":8766", ":8765") : null);
+      if (altUrl) {
+        console.log(`[QuSecBridge] Retrying dispatch on alternate port: ${altUrl}/api/send`);
+        res = await fetch(`${altUrl}/api/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          this.setGatewayUrl(altUrl);
+        }
+      } else {
+        throw netErr;
+      }
+    }
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

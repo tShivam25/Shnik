@@ -49,6 +49,9 @@ export interface Message {
   created_at: string;
   stage?: QuantumStage;
   stageDetail?: string;
+  qusec_report?: any;
+  qber?: number;
+  mode?: string;
 }
 
 export interface Alert {
