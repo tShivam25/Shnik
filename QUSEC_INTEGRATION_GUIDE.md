@@ -193,7 +193,7 @@ npm run dev
 
 ---
 
-### D. Demonstrating Cyber Attacks with the Claude Code TUI (Eve)
+### D. Demonstrating Cyber Attacks with the Adversary Console (Eve)
 
 On Laptop 3, launch the standalone `qusec-attacker` adversary console:
 ```bash
@@ -201,7 +201,7 @@ qusec-attacker --target-host <BOB_IP>
 ```
 
 ```text
-╭─ ⚡ QUSEC ATTACKER · Eve Adversary Engine · Claude Code TUI ────────────────────────────╮
+╭─ ⚡ QUSEC ATTACKER · Eve Adversary Engine · Interactive TUI ────────────────────────────╮
 │ Real-world tampering, intercept-resend, Pauli bit manipulation & hardware TRNG jamming │
 │                                                                                        │
 │ Target Host:    192.168.4.2           Attacker ESP32: Connected (/dev/ttyUSB0)         │
@@ -214,7 +214,7 @@ Type /help to view attack vectors, or /attack <type> to execute.
 ╰─ ❯ 
 ```
 
-#### Slash Commands in Claude Code TUI:
+#### Slash Commands in Adversary TUI:
 - `/attack qber [rate]` — Intercept optical photons and inject conjugate state collapse
 - `/attack tamper [ratio]` — Flip classical feed-forward Pauli coordinates ($c_0, c_1$)
 - `/attack forgery [message]` — Send forged packet with invalid Wegman-Carter MAC
