@@ -24,7 +24,10 @@ class QuSecBridge {
       session_id: null,
       role: "Node",
       peer_role: "Peer",
-      channel: { fibre_ok: false, esp32_ok: false, qber: 0.0 },
+      ready: false,
+      is_ready: false,
+      link_ok: false,
+      channel: { fibre_ok: false, esp32_ok: false, ready: false, is_ready: false, qber: 0.0 },
       key_pool: { available_bits: 0 }
     };
   }
@@ -39,7 +42,7 @@ class QuSecBridge {
 
   /** Register listener for node status changes (fibre, ESP32, key pool, QBER) */
   onStatus(callback) {
-    if (typeof callback === 'function') {
+    if (typeof callback === "function") {
       this.statusListeners.push(callback);
       if (this.currentStatus && this.currentStatus.status !== "OFFLINE") {
         try { callback(this.currentStatus); } catch (e) { console.error(e); }
@@ -49,14 +52,14 @@ class QuSecBridge {
 
   /** Register listener for incoming quantum decrypted messages & threat alerts */
   onMessage(callback) {
-    if (typeof callback === 'function') {
+    if (typeof callback === "function") {
       this.messageListeners.push(callback);
     }
   }
 
   /** Register listener for all low-level quantum pipeline events */
   onEvent(callback) {
-    if (typeof callback === 'function') {
+    if (typeof callback === "function") {
       this.eventListeners.push(callback);
     }
   }
@@ -66,7 +69,7 @@ class QuSecBridge {
     await this.fetchStatus();
     this.startEventStream();
     if (!this.pollInterval) {
-      this.pollInterval = setInterval(() => this.fetchStatus(), 3000);
+      this.pollInterval = setInterval(() => this.fetchStatus(), 2500);
     }
   }
 
@@ -87,9 +90,9 @@ class QuSecBridge {
   async fetchStatus() {
     try {
       const res = await fetch(`${this.gatewayUrl}/api/status`, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        cache: 'no-store'
+        method: "GET",
+        headers: { "Accept": "application/json" },
+        cache: "no-store"
       });
 
       if (res.ok) {
@@ -97,11 +100,22 @@ class QuSecBridge {
         this.isConnected = true;
         this.nodeRole = data.role || "Node";
         this.peerRole = data.peer_role || (this.nodeRole === "Sender" ? "Receiver" : "Sender");
+
+        const fibre_ok = data.channel?.fibre_ok ?? false;
+        const esp32_ok = data.channel?.esp32_ok ?? false;
+        const is_ready = data.ready !== undefined ? data.ready : (fibre_ok && esp32_ok);
+
         this.currentStatus = {
           ...data,
+          ready: is_ready,
+          is_ready: is_ready,
+          link_ok: is_ready,
           channel: {
-            fibre_ok: data.channel?.fibre_ok ?? false,
-            esp32_ok: data.channel?.esp32_ok ?? false,
+            ...data.channel,
+            fibre_ok: fibre_ok,
+            esp32_ok: esp32_ok,
+            ready: is_ready,
+            is_ready: is_ready,
             qber: data.channel?.qber ?? 0.0,
           },
           key_pool: {
@@ -120,7 +134,10 @@ class QuSecBridge {
         status: "OFFLINE",
         session_id: null,
         role: this.nodeRole || "Offline",
-        channel: { fibre_ok: false, esp32_ok: false, qber: 0.0 },
+        ready: false,
+        is_ready: false,
+        link_ok: false,
+        channel: { fibre_ok: false, esp32_ok: false, ready: false, is_ready: false, qber: 0.0 },
         key_pool: { available_bits: 0 },
         error: "Cannot connect to local QuSec node at " + this.gatewayUrl
       };
@@ -139,7 +156,7 @@ class QuSecBridge {
       this.eventSource = null;
     }
 
-    if (typeof EventSource === 'undefined') return;
+    if (typeof EventSource === "undefined") return;
 
     try {
       this.eventSource = new EventSource(`${this.gatewayUrl}/api/events`);
@@ -166,6 +183,26 @@ class QuSecBridge {
           } else if (packet.event === "threat_alarm" || packet.event === "threat_detected") {
             console.warn("[QuSecBridge] Threat Alarm event:", packet.data);
             this.fetchStatus();
+          } else if (packet.event === "hardware_status") {
+            const hs = packet.data || {};
+            const fibre_ok = hs.fibre_ok !== undefined ? hs.fibre_ok : true;
+            const esp32_ok = hs.esp32_ok !== undefined ? hs.esp32_ok : true;
+            const is_ready = hs.ready !== undefined ? hs.ready : (fibre_ok && esp32_ok);
+            if (this.currentStatus) {
+              this.currentStatus.channel = this.currentStatus.channel || {};
+              this.currentStatus.channel.fibre_ok = fibre_ok;
+              this.currentStatus.channel.esp32_ok = esp32_ok;
+              this.currentStatus.channel.ready = is_ready;
+              this.currentStatus.channel.is_ready = is_ready;
+              this.currentStatus.ready = is_ready;
+              this.currentStatus.is_ready = is_ready;
+              this.currentStatus.link_ok = is_ready;
+              this.statusListeners.forEach((cb) => {
+                try { cb(this.currentStatus); } catch (err) { console.error(err); }
+              });
+            } else {
+              this.fetchStatus();
+            }
           } else if (packet.event === "session_established") {
             this.fetchStatus();
           }
@@ -182,7 +219,7 @@ class QuSecBridge {
         // Retry connection after brief backoff
         setTimeout(() => {
           this.startEventStream();
-        }, 4000);
+        }, 3000);
       };
     } catch (err) {
       console.warn("[QuSecBridge] EventSource initialization failed:", err);
@@ -192,8 +229,8 @@ class QuSecBridge {
   /**
    * Send a chat message over the quantum link.
    * @param {string} text - Message plaintext to transmit
-   * @param {string} mode - 'teleportation' (state teleportation) or 'otp' (One-Time-Pad)
-   * @param {string} recipient - Optional explicit target peer ('receiver' or 'sender')
+   * @param {string} mode - "teleportation" (state teleportation) or "otp" (One-Time-Pad)
+   * @param {string} recipient - Optional explicit target peer ("receiver" or "sender")
    */
   async sendMessage(text, mode = "teleportation", recipient = null) {
     const payload = {
@@ -233,7 +270,7 @@ class QuSecBridge {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Failed to send message: ${res.statusText}`);
+      throw new Error(err.error || `Failed to send message (${res.status}): ${res.statusText}`);
     }
 
     return await res.json();

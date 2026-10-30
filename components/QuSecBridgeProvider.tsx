@@ -6,6 +6,9 @@ export interface QuSecStatus {
   status?: string;
   role?: string;
   peer_role?: string;
+  ready?: boolean;
+  is_ready?: boolean;
+  link_ok?: boolean;
   session_id?: string | null;
   dynamic_threshold?: {
     q_threshold?: number;
@@ -17,6 +20,8 @@ export interface QuSecStatus {
   channel?: {
     fibre_ok?: boolean;
     esp32_ok?: boolean;
+    ready?: boolean;
+    is_ready?: boolean;
     qber?: number;
     fidelity?: number;
     chsh?: number;
@@ -51,6 +56,8 @@ interface QuSecBridgeContextType {
   status: QuSecStatus | null;
   lastMessage: QuSecMessage | null;
   isConnected: boolean;
+  isReady: boolean;
+  linkDownReason: string | null;
   gatewayPort: number;
   setGatewayPort: (port: number) => void;
   onSendClicked: (userText: string, mode?: string, recipientRole?: string) => Promise<void>;
@@ -61,6 +68,8 @@ const QuSecBridgeContext = createContext<QuSecBridgeContextType>({
   status: null,
   lastMessage: null,
   isConnected: false,
+  isReady: false,
+  linkDownReason: "Initializing QuSec link...",
   gatewayPort: 8765,
   setGatewayPort: () => {},
   onSendClicked: async () => {},
@@ -196,12 +205,33 @@ export function QuSecBridgeProvider({ children }: { children: React.ReactNode })
     }
   }, []);
 
+  const isReady = Boolean(
+    isConnected &&
+    (status?.ready !== undefined ? status.ready : (status?.channel?.fibre_ok && status?.channel?.esp32_ok))
+  );
+
+  let linkDownReason: string | null = null;
+  if (!isConnected) {
+    linkDownReason = "QuSec node offline (Gateway disconnected)";
+  } else if (!isReady) {
+    const reasons: string[] = [];
+    if (status?.channel && !status.channel.fibre_ok) {
+      reasons.push("Optical fibre carrier lost");
+    }
+    if (status?.channel && !status.channel.esp32_ok) {
+      reasons.push("ESP32 classical link disconnected");
+    }
+    linkDownReason = reasons.length > 0 ? reasons.join(" & ") : "Physical link down";
+  }
+
   return (
     <QuSecBridgeContext.Provider
       value={{
         status,
         lastMessage,
         isConnected,
+        isReady,
+        linkDownReason,
         gatewayPort,
         setGatewayPort,
         onSendClicked,

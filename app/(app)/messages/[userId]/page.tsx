@@ -37,6 +37,8 @@ export default function ConversationDetailPage() {
     lastMessage,
     gatewayPort,
     setGatewayPort,
+    isReady,
+    linkDownReason,
   } = useQuSecBridge();
 
   const [otherUser, setOtherUser] = useState<Profile | null>(null);
@@ -243,27 +245,31 @@ export default function ConversationDetailPage() {
   const handleSendMessage = async (forceFailure: boolean = false) => {
     if (!inputText.trim() || !user || !otherUserId || !isFollowing || sending) return;
 
+    // Physical link guard: Link-gated Shnik readiness
+    if (!isReady) {
+      alert(`Optical link is down (${linkDownReason || "Fibre / ESP32 offline"}). Cannot send message.`);
+      return;
+    }
+
     const textToSend = inputText.trim();
-    setInputText('');
+    setInputText("");
     setSending(true);
 
     try {
       // 1. Dispatch over local QuSec bridge node (port 8765 or 8766)
-      try {
-        let targetRole = 'receiver';
-        if (qusecStatus?.peer_role) {
-          targetRole = qusecStatus.peer_role.toLowerCase();
-        } else if (qusecStatus?.role) {
-          targetRole = qusecStatus.role.toLowerCase() === 'sender' ? 'receiver' : 'sender';
-        } else if (otherUser?.username?.toLowerCase().includes('alice')) {
-          targetRole = 'sender';
-        }
-        await onSendClicked(textToSend, 'teleportation', targetRole);
-      } catch (bridgeErr) {
-        console.warn('QuSec bridge node send error:', bridgeErr);
+      let targetRole = "receiver";
+      if (qusecStatus?.peer_role) {
+        targetRole = qusecStatus.peer_role.toLowerCase();
+      } else if (qusecStatus?.role) {
+        targetRole = qusecStatus.role.toLowerCase() === "sender" ? "receiver" : "sender";
+      } else if (otherUser?.username?.toLowerCase().includes("alice")) {
+        targetRole = "sender";
       }
 
-      // 2. Dispatch to application store / Supabase
+      // Must succeed across quantum channel - NO SILENT FALLBACK
+      await onSendClicked(textToSend, "teleportation", targetRole);
+
+      // 2. Dispatch to application store / Supabase only after successful quantum dispatch
       if (isMock) {
         mockStore.queueAndSendMessage(
           otherUserId,
@@ -272,9 +278,9 @@ export default function ConversationDetailPage() {
           forceFailure
         );
       } else {
-        const res = await fetch('/api/messages/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const res = await fetch("/api/messages/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             from: user.id,
             to: otherUserId,
@@ -284,15 +290,17 @@ export default function ConversationDetailPage() {
         });
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.error || 'Failed to dispatch message');
+          throw new Error(data.error || "Failed to dispatch message");
         }
       }
-    } catch (err) {
-      console.error('Error sending message:', err);
+    } catch (err: any) {
+      console.error("Error sending quantum message:", err);
+      alert(`Quantum Transport Error: ${err?.message || "Transmission failed"}`);
     } finally {
       setSending(false);
-      setTimeout(() => scrollToBottom('smooth'), 100);
+      setTimeout(() => scrollToBottom("smooth"), 100);
     }
+  }
   };
 
   const handleDismissAlert = (alertId: string) => {
@@ -543,6 +551,16 @@ export default function ConversationDetailPage() {
               size="sm"
               className="mt-1"
             />
+          </div>
+        ) : !isReady ? (
+          <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-center flex flex-col items-center gap-1.5 max-w-2xl mx-auto shadow-sm">
+            <div className="flex items-center gap-2 text-sm font-semibold text-red-600">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse inline-block" />
+              <span>Optical link down — cannot send message</span>
+            </div>
+            <p className="text-xs text-red-700 font-mono">
+              {linkDownReason || "Fibre optic or ESP32 hardware disconnected. Physical link must be restored."}
+            </p>
           </div>
         ) : (
           <form
