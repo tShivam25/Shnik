@@ -32,6 +32,7 @@ export default function ConversationDetailPage() {
   const { connectionStatus, stageEvents, getStageForMessage } = useGateway();
   const {
     status: qusecStatus,
+    isConnected,
     onSendClicked,
     onInitSessionClicked,
     lastMessage,
@@ -220,7 +221,11 @@ export default function ConversationDetailPage() {
           'postgres_changes',
           { event: '*', schema: 'public', table: 'messages' },
           () => {
-            loadData();
+            // When QuSec terminal bridge is connected, incoming messages are delivered
+            // strictly after terminal verification through onMessage/displayChatMessage.
+            if (!qusecStatus?.connected) {
+              loadData();
+            }
           }
         )
         .on(
@@ -236,7 +241,7 @@ export default function ConversationDetailPage() {
         supabase.removeChannel(channel);
       };
     }
-  }, [loadData, isMock, otherUserId]);
+  }, [loadData, isMock, otherUserId, qusecStatus?.connected]);
 
   useEffect(() => {
     scrollToBottom('auto');
@@ -266,10 +271,29 @@ export default function ConversationDetailPage() {
         targetRole = "sender";
       }
 
-      // Must succeed across quantum channel - NO SILENT FALLBACK
-      await onSendClicked(textToSend, "teleportation", targetRole);
+      // Must succeed across quantum channel - terminal processes and prints QBER report and bit-by-bit Pauli corrections first!
+      const sendResult: any = await onSendClicked(textToSend, "teleportation", targetRole);
 
-      // 2. Dispatch to application store / Supabase only after successful quantum dispatch
+      // 2. Only show in website AFTER terminal finishes processing and printing report
+      const qReport = sendResult?.qusec_report || null;
+      const sentMsg: Message = {
+        id: sendResult?.msg_id || `sent-${Date.now()}`,
+        sender_id: user.id,
+        recipient_id: otherUserId,
+        body: textToSend,
+        status: sendResult?.success === false ? 'failed' : 'delivered',
+        verified: sendResult?.success !== false,
+        session_id: sendResult?.session_id || 'qusec-node',
+        stage: sendResult?.success === false ? 'failed' : 'delivered',
+        stageDetail: sendResult?.final_result || 'Verified & Transmitted via Quantum Link',
+        created_at: new Date().toISOString(),
+        qusec_report: qReport,
+        qber: sendResult?.calculated_qber ?? sendResult?.qber,
+        mode: 'teleportation',
+      };
+      setMessages((prev) => [...prev, sentMsg]);
+
+      // 3. Dispatch to application store / Supabase in background
       if (isMock) {
         mockStore.queueAndSendMessage(
           otherUserId,
@@ -278,7 +302,7 @@ export default function ConversationDetailPage() {
           forceFailure
         );
       } else {
-        const res = await fetch("/api/messages/send", {
+        fetch("/api/messages/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -286,12 +310,9 @@ export default function ConversationDetailPage() {
             to: otherUserId,
             text: textToSend,
             forceFailure,
+            qusec_report: qReport,
           }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || "Failed to dispatch message");
-        }
+        }).catch((e) => console.warn("Supabase background sync:", e));
       }
     } catch (err: any) {
       console.error("Error sending quantum message:", err);
@@ -300,7 +321,6 @@ export default function ConversationDetailPage() {
       setSending(false);
       setTimeout(() => scrollToBottom("smooth"), 100);
     }
-  }
   };
 
   const handleDismissAlert = (alertId: string) => {

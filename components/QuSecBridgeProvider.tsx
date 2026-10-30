@@ -9,6 +9,7 @@ export interface QuSecStatus {
   ready?: boolean;
   is_ready?: boolean;
   link_ok?: boolean;
+  connected?: boolean;
   session_id?: string | null;
   dynamic_threshold?: {
     q_threshold?: number;
@@ -60,7 +61,7 @@ interface QuSecBridgeContextType {
   linkDownReason: string | null;
   gatewayPort: number;
   setGatewayPort: (port: number) => void;
-  onSendClicked: (userText: string, mode?: string, recipientRole?: string) => Promise<void>;
+  onSendClicked: (userText: string, mode?: string, recipientRole?: string) => Promise<any>;
   onInitSessionClicked: () => Promise<void>;
 }
 
@@ -195,8 +196,9 @@ export function QuSecBridgeProvider({ children }: { children: React.ReactNode })
 
   const onSendClicked = useCallback(async (userText: string, mode: string = 'teleportation', recipientRole?: string) => {
     if (qusecRef.current) {
-      await qusecRef.current.sendMessage(userText, mode, recipientRole);
+      return await qusecRef.current.sendMessage(userText, mode, recipientRole);
     }
+    return null;
   }, []);
 
   const onInitSessionClicked = useCallback(async () => {
