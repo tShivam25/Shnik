@@ -94,7 +94,7 @@ export function QuSecBridgeProvider({ children }: { children: React.ReactNode })
 
     let initialPort = paramPort ? parseInt(paramPort, 10) : (savedPort ? parseInt(savedPort, 10) : null);
     if (!initialPort) {
-      initialPort = (asUser === 'bob') ? 8766 : 8765;
+      initialPort = 8765;
     }
 
     if (!isNaN(initialPort) && (initialPort === 8765 || initialPort === 8766 || initialPort > 1024)) {
