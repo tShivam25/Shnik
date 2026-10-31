@@ -576,7 +576,9 @@ export default function ConversationDetailPage() {
           <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-center flex flex-col items-center gap-1.5 max-w-2xl mx-auto shadow-sm">
             <div className="flex items-center gap-2 text-sm font-semibold text-red-600">
               <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse inline-block" />
-              <span>Optical link down — cannot send message</span>
+              <span>
+                {!isConnected ? "QuSec Node Offline — Waiting for Terminal..." : "Optical link down — cannot send message"}
+              </span>
             </div>
             <p className="text-xs text-red-700 font-mono">
               {linkDownReason || "Fibre optic or ESP32 hardware disconnected. Physical link must be restored."}

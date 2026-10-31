@@ -112,6 +112,44 @@ export function QuSecBridgeProvider({ children }: { children: React.ReactNode })
     }
   }, []);
 
+  // Continuous auto-discovery of active local QuSec node (supports 8765 & 8766)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let active = true;
+
+    const probeActiveNode = async () => {
+      if (isConnected) return;
+
+      for (const p of [8765, 8766]) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${p}/api/status`, {
+            cache: 'no-store',
+            headers: { 'Accept': 'application/json' },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && (data.status === 'ONLINE' || data.ready !== undefined)) {
+              if (active && gatewayPort !== p) {
+                console.log(`[QuSecBridge] Auto-detected QuSec node on port ${p}`);
+                setGatewayPort(p);
+                return;
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    };
+
+    probeActiveNode();
+    const probeInterval = setInterval(probeActiveNode, 2000);
+
+    return () => {
+      active = false;
+      clearInterval(probeInterval);
+    };
+  }, [isConnected, gatewayPort, setGatewayPort]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -133,21 +171,6 @@ export function QuSecBridgeProvider({ children }: { children: React.ReactNode })
           setStatus(newStatus);
           const online = newStatus.status !== 'OFFLINE';
           setIsConnected(online);
-
-          // Auto-probe alternate port if local port is offline
-          if (!online && !probeAttempted && (gatewayPort === 8765 || gatewayPort === 8766)) {
-            probeAttempted = true;
-            const altPort = (gatewayPort === 8765) ? 8766 : 8765;
-            fetch(`http://127.0.0.1:${altPort}/api/status`)
-              .then(res => res.json())
-              .then(data => {
-                if (data && data.status === 'ONLINE') {
-                  console.log(`[QuSecBridge] Auto-detected active QuSec node on port ${altPort}`);
-                  setGatewayPort(altPort);
-                }
-              })
-              .catch(() => {});
-          }
         });
 
         // 2. Listen for incoming decrypted chat messages from the peer
